@@ -8,9 +8,7 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 
-# =========================================================
 # 공통 응답 빌더
-# =========================================================
 def build_success_response(event, response_body):
     return {
         "messageVersion": "1.0",
@@ -49,9 +47,7 @@ def get_params(event):
     return {p["name"]: p["value"] for p in event.get("parameters", [])}
 
 
-# =========================================================
-# 1) GET /pr - PR 정보 조회 (기존 로직, 변경 없음)
-# =========================================================
+# 1) GET /pr - PR 정보 조회
 def handle_get_pr(event):
     params = get_params(event)
     owner = params.get("owner")
@@ -89,9 +85,7 @@ def handle_get_pr(event):
     return response_body
 
 
-# =========================================================
-# 2) POST /pr/comment - PR에 댓글 등록 (urllib로 재구현)
-# =========================================================
+# 2) POST /pr/comment - PR에 댓글 등록
 def handle_post_comment(event):
     params = get_params(event)
     owner = params.get("owner")
@@ -123,9 +117,7 @@ def handle_post_comment(event):
     }
 
 
-# =========================================================
-# 3) POST /complexity - 코드 복잡도 분석 (radon)
-# =========================================================
+# 3) POST /complexity - 코드 복잡도 분석
 def handle_analyze_complexity(event):
     from radon.complexity import cc_visit, cc_rank
 
@@ -166,9 +158,7 @@ def handle_analyze_complexity(event):
     return {"summary": summary, "details": results}
 
 
-# =========================================================
-# 4) POST /unittest - 단위 테스트 자동 생성 (Bedrock Claude 호출)
-# =========================================================
+# 4) POST /unittest - 단위 테스트 자동 생성
 def handle_generate_unit_test(event):
     import boto3
 
@@ -211,9 +201,7 @@ def handle_generate_unit_test(event):
     return {"test_code": test_code}
 
 
-# =========================================================
-# 5) POST /refactor - 리팩토링 제안 (Bedrock Claude 호출)
-# =========================================================
+# 5) POST /refactor - 리팩토링 제안
 def handle_suggest_refactor(event):
     import boto3
 
@@ -254,9 +242,7 @@ def handle_suggest_refactor(event):
     return {"suggestion": suggestion}
 
 
-# =========================================================
 # 6) POST /slack - Slack 알림 전송
-# =========================================================
 def handle_send_slack(event):
     params = get_params(event)
     message_text = params.get("message", "")
@@ -285,9 +271,7 @@ def handle_send_slack(event):
     return {"success": True, "message": "Slack notification sent"}
 
 
-# =========================================================
-# 메인 핸들러: apiPath 라우팅
-# =========================================================
+# 라우터
 ROUTES = {
     "/pr": handle_get_pr,
     "/pr/comment": handle_post_comment,

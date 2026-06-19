@@ -1,0 +1,172 @@
+openapi: 3.0.0
+info:
+  title: CodeBuddy Tools
+  version: 1.0.0
+paths:
+  /pr:
+    get:
+      operationId: get_github_pr
+      summary: Get GitHub Pull Request details
+      description: Retrieves detailed information about a specific GitHub Pull Request.
+        Use this when the user asks about PR details, wants to review a PR, or needs
+        to analyze code changes in a pull request.
+      parameters:
+      - name: owner
+        in: query
+        required: true
+        schema:
+          type: string
+        description: The GitHub repository owner/organization name
+      - name: repo
+        in: query
+        required: true
+        schema:
+          type: string
+        description: The GitHub repository name
+      - name: pr_number
+        in: query
+        required: true
+        schema:
+          type: integer
+        description: The Pull Request number to retrieve
+      responses:
+        '200':
+          description: PR details retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+  /pr/comment:
+    post:
+      operationId: post_pr_comment
+      summary: Add a comment to a Pull Request
+      description: Adds a comment to a specific GitHub Pull Request. Use this when
+        the user wants to leave feedback, review results, or analysis summary on a
+        PR.
+      parameters:
+      - name: owner
+        in: query
+        required: true
+        schema:
+          type: string
+        description: Repository owner/organization
+      - name: repo
+        in: query
+        required: true
+        schema:
+          type: string
+        description: Repository name
+      - name: pr_number
+        in: query
+        required: true
+        schema:
+          type: integer
+        description: Pull Request number
+      - name: comment
+        in: query
+        required: true
+        schema:
+          type: string
+        description: The comment text to post
+      responses:
+        '200':
+          description: Comment added successfully
+  /complexity:
+    post:
+      operationId: analyze_complexity
+      summary: Analyze code cyclomatic complexity
+      description: Analyzes Python code and returns cyclomatic complexity scores.
+        Use this to identify overly complex functions that need refactoring.
+      parameters:
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+        description: The Python source code to analyze
+      responses:
+        '200':
+          description: Complexity analysis results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  summary:
+                    type: object
+                  details:
+                    type: array
+  /unittest:
+    post:
+      operationId: generate_unit_test
+      summary: Generate pytest unit tests for a function
+      description: Generates pytest unit test code for a given function, including
+        normal cases, boundary values, and exception handling.
+      parameters:
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+        description: The original function code to generate tests for
+      - name: function_name
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Specific function name to focus testing on (optional)
+      responses:
+        '200':
+          description: Generated test code
+  /refactor:
+    post:
+      operationId: suggest_refactor
+      summary: Suggest code refactoring
+      description: Analyzes code and suggests improved structure, performance optimizations,
+        or design patterns.
+      parameters:
+      - name: code
+        in: query
+        required: true
+        schema:
+          type: string
+        description: The code to analyze for refactoring
+      - name: focus
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - performance
+          - readability
+          - maintainability
+        description: 'Refactoring focus area (default: maintainability)'
+      responses:
+        '200':
+          description: Refactoring suggestion
+  /slack:
+    post:
+      operationId: send_slack_notification
+      summary: Send a Slack notification
+      description: Sends a notification message to a Slack channel via webhook. Use
+        this after completing a review to notify the team.
+      parameters:
+      - name: message
+        in: query
+        required: true
+        schema:
+          type: string
+        description: The notification message text
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - success
+          - error
+          - info
+        description: 'Notification status type (default: info)'
+      responses:
+        '200':
+          description: Notification sent

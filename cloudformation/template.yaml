@@ -1,0 +1,210 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  CodeBuddy Agent - AI 기반 GitHub PR 자동 리뷰 시스템
+  AWS Bedrock Agent + Lambda + API Gateway 기반 서버리스 아키텍처
+
+# Parameters
+Parameters:  
+  AgentId:
+    Type: String
+    Description: Bedrock Agent ID (AWS 콘솔에서 확인)
+
+  AliasId:
+    Type: String
+    Description: Bedrock Agent Alias ID
+
+  GitHubToken:
+    Type: String
+    NoEcho: true
+    Description: GitHub Personal Access Token (repo, pull_request 권한 필요)
+
+  SlackWebhookUrl:
+    Type: String
+    NoEcho: true
+    Description: Slack Incoming Webhook URL (#codebuddy 채널)
+
+  LambdaArtifactBucket:
+    Type: String
+    Description: Lambda ZIP 파일이 업로드된 S3 버킷 이름
+
+  ToolsLambdaS3Key:
+    Type: String
+    Default: lambda/tools.zip
+    Description: Tool Lambda ZIP의 S3 키 (경로)
+
+  OrchestratorLambdaS3Key:
+    Type: String
+    Default: lambda/orchestrator.zip
+    Description: Orchestrator Lambda ZIP의 S3 키 (경로)
+
+# Resources
+Resources:
+  # IAM Role: Tool Lambda
+  # 권한: bedrock:InvokeModel + CloudWatch Logs
+  CodeBuddyToolsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CodeBuddy-Lambda-Role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockInvokeModelAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: "*"
+
+  # IAM Role: Orchestrator Lambda
+  CodeBuddyOrchestratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CodeBuddy-Orchestrator-Role
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: BedrockInvokeAgentAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: bedrock:InvokeAgent
+                Resource: !Sub "arn:aws:bedrock:${AWS::Region}:*:agent-alias/*"
+        - PolicyName: LambdaSelfInvokeAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:codebuddy-orchestrator"
+
+  # Lambda: Tool Lambda
+  CodeBuddyToolsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: codebuddy-github-pr
+      Description: CodeBuddy Tool Lambda - GitHub PR 조회, 복잡도 분석, 테스트 생성, 리팩토링 제안, Slack 알림
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt CodeBuddyToolsRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref ToolsLambdaS3Key
+      Environment:
+        Variables:
+          GITHUB_TOKEN: !Ref GitHubToken
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+          PYTHONIOENCODING: utf-8
+          LANG: C.UTF-8
+
+  # Lambda: Orchestrator Lambda (API Gateway 진입점)
+  CodeBuddyOrchestratorLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: codebuddy-orchestrator
+      Description: CodeBuddy Orchestrator - API Gateway 요청을 받아 Bedrock Agent 비동기 실행
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt CodeBuddyOrchestratorRole.Arn
+      Timeout: 300
+      MemorySize: 1024
+      Code:
+        S3Bucket: !Ref LambdaArtifactBucket
+        S3Key: !Ref OrchestratorLambdaS3Key
+      Environment:
+        Variables:
+          AGENT_ID: !Ref AgentId
+          ALIAS_ID: !Ref AliasId
+          SLACK_WEBHOOK_URL: !Ref SlackWebhookUrl
+
+  # API Gateway: REST API
+  CodeBuddyRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: CodeBuddyAPI
+      Description: CodeBuddy Agent Webhook API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # /review 리소스
+  ReviewResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref CodeBuddyRestApi
+      ParentId: !GetAtt CodeBuddyRestApi.RootResourceId
+      PathPart: review
+
+  # POST /review 메서드
+  ReviewMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref CodeBuddyRestApi
+      ResourceId: !Ref ReviewResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations"
+          - LambdaArn: !GetAtt CodeBuddyOrchestratorLambda.Arn
+
+  # prod 스테이지 배포
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: ReviewMethod
+    Properties:
+      RestApiId: !Ref CodeBuddyRestApi
+      Description: CodeBuddy API 배포
+
+  ProdStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref CodeBuddyRestApi
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+      Description: Production Stage
+
+  # API Gateway → Orchestrator Lambda 호출 권한
+  ApiGatewayLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt CodeBuddyOrchestratorLambda.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${CodeBuddyRestApi}/*/POST/review"
+
+# Outputs
+Outputs:
+  ApiEndpoint:
+    Description: CodeBuddy API 엔드포인트 URL
+    Value: !Sub "https://${CodeBuddyRestApi}.execute-api.${AWS::Region}.amazonaws.com/prod/review"
+
+  ToolsLambdaArn:
+    Description: Tool Lambda ARN
+    Value: !GetAtt CodeBuddyToolsLambda.Arn
+
+  OrchestratorLambdaArn:
+    Description: Orchestrator Lambda ARN
+    Value: !GetAtt CodeBuddyOrchestratorLambda.Arn
